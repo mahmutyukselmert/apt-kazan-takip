@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1793127555980,
+      "tag": "0000_mighty_otto_octavius",
+      "breakpoints": true
+    }
+  ]
+}
