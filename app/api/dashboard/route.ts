@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gt, lt, lte, ne } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { readings, settings, tariffs } from "@/db/schema";
@@ -165,6 +165,74 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "İşlem tamamlanamadı." },
+      { status: 400 },
+    );
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const uid = userId(request);
+    const body = await request.json();
+    const id = Number(body.id);
+    if (!Number.isInteger(id)) throw new Error("Kayıt kimliği geçersiz.");
+    if (!isIsoDate(body.readAt, true)) throw new Error("Okuma tarihi ve saati eksik.");
+
+    const db = getDb();
+    const current = await db
+      .select()
+      .from(readings)
+      .where(and(eq(readings.userId, uid), eq(readings.id, id)))
+      .limit(1);
+    if (!current.length) throw new Error("Düzenlenecek okuma bulunamadı.");
+
+    const hrc = cleanNumber(body.hrc, "HRC", 0);
+    const krd = cleanNumber(body.krd, "KRD", 0);
+    const sameTime = await db
+      .select({ id: readings.id })
+      .from(readings)
+      .where(and(eq(readings.userId, uid), eq(readings.readAt, body.readAt), ne(readings.id, id)))
+      .limit(1);
+    if (sameTime.length) throw new Error("Bu tarih ve saatte başka bir okuma var.");
+
+    const [previous, next, activeTariff] = await Promise.all([
+      db.select().from(readings)
+        .where(and(eq(readings.userId, uid), lt(readings.readAt, body.readAt), ne(readings.id, id)))
+        .orderBy(desc(readings.readAt)).limit(1),
+      db.select().from(readings)
+        .where(and(eq(readings.userId, uid), gt(readings.readAt, body.readAt), ne(readings.id, id)))
+        .orderBy(asc(readings.readAt)).limit(1),
+      db.select().from(tariffs)
+        .where(and(eq(tariffs.userId, uid), lte(tariffs.effectiveFrom, body.readAt.slice(0, 10))))
+        .orderBy(desc(tariffs.effectiveFrom)).limit(1),
+    ]);
+
+    if (previous[0] && hrc < previous[0].hrc) {
+      throw new Error(`HRC önceki okumadan (${previous[0].hrc.toFixed(2)}) düşük olamaz.`);
+    }
+    if (next[0] && hrc > next[0].hrc) {
+      throw new Error(`HRC sonraki okumadan (${next[0].hrc.toFixed(2)}) yüksek olamaz.`);
+    }
+
+    const updated = await db
+      .update(readings)
+      .set({
+        readAt: body.readAt,
+        hrc,
+        krd,
+        boilerTemp: body.boilerTemp === "" || body.boilerTemp == null ? null : cleanNumber(body.boilerTemp, "Kazan sıcaklığı", 0),
+        outsideTemp: body.outsideTemp === "" || body.outsideTemp == null ? null : cleanNumber(body.outsideTemp, "Dış hava"),
+        boilerStatus: ["on", "off", "standby"].includes(body.boilerStatus) ? body.boilerStatus : "on",
+        unitPrice: activeTariff[0]?.pricePerM3 ?? current[0].unitPrice,
+        note: String(body.note || "").slice(0, 300),
+      })
+      .where(and(eq(readings.userId, uid), eq(readings.id, id)))
+      .returning();
+
+    return NextResponse.json({ reading: updated[0] });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Okuma güncellenemedi." },
       { status: 400 },
     );
   }
