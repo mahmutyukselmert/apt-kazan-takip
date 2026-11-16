@@ -8,6 +8,13 @@
       "when": 1793127555980,
       "tag": "0000_mighty_otto_octavius",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793339507737,
+      "tag": "0001_light_hellfire_club",
+      "breakpoints": true
     }
   ]
 }
